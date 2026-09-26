@@ -108,8 +108,10 @@ const MAX_RETRIES = 2; // повторных попыток на одну стр
 const rows = new Map(); // vacancy_id -> row, чтобы не было дублей между запросами
 
 async function collect() {
+  const stats = { requested: 0, loaded: 0, failed: [] };
   for (const q of QUERIES) {
     for (let p = 0; p < MAX_PAGES; p++) {
+      stats.requested++;
       let res = null;
       for (let attempt = 0; attempt <= MAX_RETRIES && !res; attempt++) {
         try {
@@ -120,9 +122,11 @@ async function collect() {
         }
       }
       if (!res) {
+        stats.failed.push(`${q} p${p}`);
         console.error(`Пропускаю запрос "${q}" начиная со страницы ${p}: не удалось загрузить`);
         break;
       }
+      stats.loaded++;
       const vacancies = res.vacancies || [];
       for (const v of vacancies) {
         if (!rows.has(v.vacancyId)) rows.set(v.vacancyId, toRow(v, q));
@@ -134,6 +138,10 @@ async function collect() {
     }
   }
   console.log('done', rows.size);
+  console.log(
+    `Страниц запрошено: ${stats.requested}, загружено: ${stats.loaded}, ` +
+    `не удалось: ${stats.failed.length}` + (stats.failed.length ? ` (${stats.failed.join(', ')})` : '')
+  );
 }
 
 function downloadCsv(filename = 'hh_it_vacancies.csv') {
@@ -145,10 +153,12 @@ function downloadCsv(filename = 'hh_it_vacancies.csv') {
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const csv = [cols.join(','), ...data.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n');
+  const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv' }));
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+  a.href = url;
   a.download = filename;
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 collect();
