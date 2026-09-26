@@ -90,24 +90,38 @@ function toRow(v, query) {
 async function fetchPage(query, page) {
   const url = `/search/vacancy?text=${encodeURIComponent(query)}&area=${AREA}` +
     `&items_on_page=${PER_PAGE}&page=${page}`;
-  const html = await (await fetch(url)).text();
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const html = await resp.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  const state = JSON.parse(doc.querySelector('#HH-Lux-InitialState').innerHTML);
-  return state.vacancySearchResult;
+  const tpl = doc.querySelector('#HH-Lux-InitialState');
+  if (!tpl) {
+    throw new Error('не нашёл #HH-Lux-InitialState: вёрстка изменилась или показана капча');
+  }
+  const result = JSON.parse(tpl.innerHTML).vacancySearchResult;
+  if (!result) throw new Error('в JSON страницы нет vacancySearchResult');
+  return result;
 }
+
+const MAX_RETRIES = 2; // повторных попыток на одну страницу
 
 const rows = new Map(); // vacancy_id -> row, чтобы не было дублей между запросами
 
 async function collect() {
   for (const q of QUERIES) {
     for (let p = 0; p < MAX_PAGES; p++) {
-      let res;
-      try {
-        res = await fetchPage(q, p);
-      } catch (e) {
-        console.warn(q, p, e.message);
-        await sleep(3000);
-        continue;
+      let res = null;
+      for (let attempt = 0; attempt <= MAX_RETRIES && !res; attempt++) {
+        try {
+          res = await fetchPage(q, p);
+        } catch (e) {
+          console.warn(`${q}, страница ${p}, попытка ${attempt + 1}: ${e.message}`);
+          if (attempt < MAX_RETRIES) await sleep(3000);
+        }
+      }
+      if (!res) {
+        console.error(`Пропускаю запрос "${q}" начиная со страницы ${p}: не удалось загрузить`);
+        break;
       }
       const vacancies = res.vacancies || [];
       for (const v of vacancies) {
